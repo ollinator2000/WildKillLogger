@@ -1,49 +1,64 @@
-# WildKillLogger (ARK: Survival Ascended)
+# WildKillLogger (ARK: Survival Ascended / ASA Plugin)
 
 `WildKillLogger` ist ein ARK Server API Plugin fuer ARK: Survival Ascended Dedicated Server.
-Das Plugin schreibt Wild-Dino-Kills als CSV fuer Auswertung, Leaderboards oder Discord-Bots.
+Das Plugin erkennt PvE-Wild-Dino-Kills heuristisch und schreibt sie als CSV fuer Auswertung, Leaderboards oder Discord-Bots.
 
-## Status
+## Ueberblick
 
-Dieses Repository ist jetzt als GitHub-Community-Repo vorbereitet.
+Da ASA aktuell keine stabilen Damage-/Kill-Hooks in allen Setups bietet, nutzt das Plugin eine robuste Naeherungslogik auf Basis von:
+- `AActor.Destroyed()` Events
+- bekannten Spielerpositionen
+- raeumlicher Naehe + zeitlicher Frische
 
-Aktuell sind im Projekt enthalten:
-- `WildKillLogger.dll` (kompilierte Plugin-Datei)
-- `PluginInfo.json`
-- `config.json` (laufende Konfiguration)
-- `WildKillLogger_Config_Dokumentation.pdf` (technische Doku)
+Ziel ist eine saubere, verwertbare Kill-Datenbasis statt moeglichst vieler unsicherer Treffer.
 
-Hinweis:
-Die PDF nennt zusaetzlich `WildKillLogger_Main_config_documented.cpp` und `config.json.example`.
-Diese beiden Dateien sind im aktuellen Stand nicht enthalten.
+## Features
 
-## Was das Plugin tut
+- zuverlaessige PvE-Kill-Erkennung (heuristisch)
+- keine unsicheren Memory-/Offset-Hooks
+- saubere CSV-Ausgabe fuer Weiterverarbeitung
+- ausfuehrliches Debug-Logging fuer Diagnose
+- Konfiguration ohne Rebuild ueber `config.json`
+- performantes, thread-basiertes Spielertracking
 
-- registriert Spieler beim Join
-- aktualisiert Spielerpositionen in einem Hintergrund-Thread
-- lauscht auf `AActor.Destroyed()`
-- filtert auf Dino-Character-Blueprints
-- ordnet Dino-Destroy-Ereignisse heuristisch einem Spieler zu (Radius + Freshness)
-- schreibt nur zuverlaessige (`high confidence`) Kills in die CSV (Standard)
-- schreibt detaillierte Diagnosen in ein Debug-Log
+## Funktionsweise
+
+### Player Tracking
+Beim Join werden Spieler registriert (u. a. EOS-ID, Name, Position).
+
+### Hintergrund-Thread
+Aktualisiert regelmaessig die zuletzt bekannte Spielerposition.
+
+### Dino Detection
+Hook ueber `AActor.Destroyed()`, anschliessend Dino-Blueprint-Filter.
+
+### Kill Attribution (Confidence)
+- genau 1 plausibler Spieler im Radius -> `high`
+- mehrere Spieler -> `low`
+- kein passender Spieler -> `unknown`
+
+Standardmaessig werden nur `high`-Faelle in die CSV geschrieben.
 
 ## Ausgabe-Dateien (Runtime)
 
+Pfad (Server): `ArkApi/Plugins/WildKillLogger/`
+
 - `wild_kills.csv`
 - `wildkilllogger_debug.log`
+- `config.json`
 
-Diese Dateien werden zur Laufzeit im Plugin-Ordner erzeugt und sind **nicht** fuer Git bestimmt.
+Die Laufzeitdateien `*.csv` und `*.log` sind absichtlich in `.gitignore`.
 
-## Installation auf ASA-Server
+## Installation
 
-1. `WildKillLogger.dll` in `ArkApi/Plugins/WildKillLogger/` kopieren.
-2. `config.json` im selben Ordner belassen oder anpassen.
+1. `WildKillLogger.dll` nach `ArkApi/Plugins/WildKillLogger/` kopieren.
+2. `config.json` erzeugen lassen oder anpassen.
 3. Server neu starten.
-4. Pruefen, ob `wild_kills.csv` und `wildkilllogger_debug.log` entstehen.
+4. Pruefen, ob `wild_kills.csv` und `wildkilllogger_debug.log` erzeugt werden.
 
 ## Konfiguration
 
-Siehe `config.json` und `docs/CONFIG_REFERENCE.md`.
+Details: `docs/CONFIG_REFERENCE.md`
 
 Standardwerte:
 
@@ -61,13 +76,25 @@ Standardwerte:
 }
 ```
 
+## Repository-Status
+
+Dieses Repository ist als Community-Repo vorbereitet.
+
+Aktuell enthalten:
+- `WildKillLogger.dll` (kompilierte Plugin-Datei)
+- `PluginInfo.json`
+- `config.json` und `config.json.example`
+- `WildKillLogger_Config_Dokumentation.pdf`
+
+Hinweis:
+Die PDF verweist zusaetzlich auf `WildKillLogger_Main_config_documented.cpp`.
+Die dokumentierte Source-Datei liegt jetzt unter `src/WildKillLogger_Main_config_documented.cpp`.
+
 ## Entwicklung / Community
 
-Wenn du am Plugin weiterarbeiten willst:
-
-1. Issue anlegen (Bug/Feature/Refactor)
+1. Issue erstellen (Bug/Feature/Refactor)
 2. Branch von `main` erstellen
-3. Aenderung + Tests/Validierung
+3. Aenderung inklusive Validierung
 4. Pull Request mit Repro-Schritten und erwarteter Wirkung
 
 Details: `CONTRIBUTING.md`
@@ -78,4 +105,4 @@ MIT, siehe `LICENSE`.
 
 ## Credits
 
-Projektbasis und Funktionsbeschreibung stammen aus `WildKillLogger_Config_Dokumentation.pdf`.
+Technische Basis und Funktionsbeschreibung stammen aus `WildKillLogger_Config_Dokumentation.pdf`.
