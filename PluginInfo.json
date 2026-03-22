@@ -1,0 +1,7 @@
+{
+  "FullName": "WildKillLogger",
+  "Description": "Logs wild dino kills to CSV for statistics",
+  "Version": 0.1,
+  "MinApiVersion": 1.19,
+  "Dependencies": []
+}

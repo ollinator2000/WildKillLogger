@@ -1,0 +1,23 @@
+# Runtime output
+*.log
+*.csv
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Build artifacts
+build/
+bin/
+obj/
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.iobj
+*.ipdb
+
+# Optional local config overrides
+config.local.json
