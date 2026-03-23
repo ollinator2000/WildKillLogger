@@ -67,6 +67,8 @@ Standardwerte:
   "kill_radius": 3000.0,
   "position_update_ms": 2000,
   "player_fresh_seconds": 15,
+  "stale_player_seconds": 86400,
+  "enable_position_thread": false,
   "write_debug_log": true,
   "write_only_high_confidence": true,
   "debug_log_non_dino_destroy": false,
@@ -75,6 +77,11 @@ Standardwerte:
   "debug_log_filename": "wildkilllogger_debug.log"
 }
 ```
+
+Hinweis fuer Linux/Wine:
+- `enable_position_thread: false` ist der stabile Sicherheitsmodus.
+- `enable_position_thread: true` nutzt Legacy-Tracking mit hoeherer Genauigkeit, kann aber in bestimmten Wine-Setups instabil sein.
+- `player_fresh_seconds` wird nur bei aktiviertem Positionsthread fuer die Freshness-Pruefung verwendet.
 
 ## Repository-Status
 
