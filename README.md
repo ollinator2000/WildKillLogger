@@ -52,7 +52,7 @@ Die Laufzeitdateien `*.csv` und `*.log` sind absichtlich in `.gitignore`.
 ## Installation
 
 1. `WildKillLogger.dll` nach `ArkApi/Plugins/WildKillLogger/` kopieren.
-2. `config.json` erzeugen lassen oder anpassen.
+2. `config.json` lokal aus `config.json.example` erzeugen oder vom Plugin erzeugen lassen.
 3. Server neu starten.
 4. Pruefen, ob `wild_kills.csv` und `wildkilllogger_debug.log` erzeugt werden.
 
@@ -90,7 +90,7 @@ Dieses Repository ist als Community-Repo vorbereitet.
 Aktuell enthalten:
 - `WildKillLogger.dll` (kompilierte Plugin-Datei)
 - `PluginInfo.json`
-- `config.json` und `config.json.example`
+- `config.json.example` (Vorlage; `config.json` bleibt lokal und wird nicht versioniert)
 - `WildKillLogger_Config_Dokumentation.pdf`
 
 Hinweis:
