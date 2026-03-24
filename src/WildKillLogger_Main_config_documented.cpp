@@ -1,3 +1,8 @@
+// Build marker:
+// branch: perf_tuning
+// commit: e227d4481d128ae85e76926978b1396c17588f39
+// commit_timestamp: 2026-03-24T10:05:23+01:00
+
 #include "API/ARK/Ark.h"
 
 #include <atomic>
