@@ -69,7 +69,7 @@ Standardwerte:
   "player_fresh_seconds": 15,
   "stale_player_seconds": 86400,
   "enable_position_thread": false,
-  "write_debug_log": true,
+  "write_debug_log": false,
   "write_only_high_confidence": true,
   "debug_log_non_dino_destroy": false,
   "debug_log_skipped_kills": true,

@@ -1,7 +1,7 @@
 // Build marker:
 // branch: perf_tuning
-// commit: fb2ed8f54fe94e2f20bf1000e0a87f4c4ea52dd4
-// commit_timestamp: 2026-03-24T12:29:56+01:00
+// commit: da9007a4d83e761aeaaf94a478d90e2d421e6b7f
+// commit_timestamp: 2026-03-24T12:50:31+01:00
 
 #include "API/ARK/Ark.h"
 
@@ -40,7 +40,7 @@ namespace WildKillLogger
         // false = no background UE object access (safer, less precise tracking).
         bool enable_position_thread = false;
 
-        bool write_debug_log = true;
+        bool write_debug_log = false;
         bool write_only_high_confidence = true;
         bool debug_log_non_dino_destroy = false;
         bool debug_log_skipped_kills = true;
@@ -258,7 +258,7 @@ namespace WildKillLogger
              << "  \"player_fresh_seconds\": 15,\n"
              << "  \"stale_player_seconds\": 86400,\n"
              << "  \"enable_position_thread\": false,\n"
-             << "  \"write_debug_log\": true,\n"
+             << "  \"write_debug_log\": false,\n"
              << "  \"write_only_high_confidence\": true,\n"
              << "  \"debug_log_non_dino_destroy\": false,\n"
              << "  \"debug_log_skipped_kills\": true,\n"
