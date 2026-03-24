@@ -11,6 +11,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 
 namespace WildKillLogger
 {
@@ -57,8 +58,10 @@ namespace WildKillLogger
 
     std::mutex g_data_mutex;
     std::mutex g_file_mutex;
+    std::mutex g_blueprint_cache_mutex;
 
     std::unordered_map<uint64_t, PlayerSnapshot> g_players;
+    std::unordered_map<uint64_t, std::pair<std::string, bool>> g_blueprint_cache;
 
     std::atomic<bool> g_running{false};
     std::thread g_position_thread;
@@ -293,6 +296,12 @@ namespace WildKillLogger
         file << "[" << timestamp << "] " << message << "\n";
     }
 
+    void DebugLogIfEnabled(const std::string& message)
+    {
+        if (g_config.write_debug_log)
+            DebugLog(message);
+    }
+
     // -------------------------
     // Dino-Filter
     // -------------------------
@@ -340,6 +349,31 @@ namespace WildKillLogger
         {
             return "";
         }
+    }
+
+    std::pair<std::string, bool> GetOrClassifyBlueprint(AActor* actor)
+    {
+        if (!actor || !actor->ClassPrivateField())
+            return {"", false};
+
+        const auto class_key = reinterpret_cast<uint64_t>(actor->ClassPrivateField());
+
+        {
+            std::lock_guard<std::mutex> lock(g_blueprint_cache_mutex);
+            auto it = g_blueprint_cache.find(class_key);
+            if (it != g_blueprint_cache.end())
+                return it->second;
+        }
+
+        const std::string blueprint = GetBlueprintPath(actor);
+        const bool is_dino = IsLikelyDinoCharacterBlueprint(blueprint);
+
+        {
+            std::lock_guard<std::mutex> lock(g_blueprint_cache_mutex);
+            g_blueprint_cache[class_key] = {blueprint, is_dino};
+        }
+
+        return {blueprint, is_dino};
     }
 
     std::string GetPlayerName(AShooterPlayerController* controller)
@@ -416,12 +450,12 @@ namespace WildKillLogger
         return false;
     }
 
-    double Distance(const FVector& a, const FVector& b)
+    double DistanceSquared(const FVector& a, const FVector& b)
     {
         const double dx = static_cast<double>(a.X) - static_cast<double>(b.X);
         const double dy = static_cast<double>(a.Y) - static_cast<double>(b.Y);
         const double dz = static_cast<double>(a.Z) - static_cast<double>(b.Z);
-        return std::sqrt(dx * dx + dy * dy + dz * dz);
+        return (dx * dx + dy * dy + dz * dz);
     }
 
     // -------------------------
@@ -488,7 +522,7 @@ namespace WildKillLogger
         }
 
         if (append_failed)
-            DebugLog("ERROR failed to append wild_kills.csv");
+            DebugLogIfEnabled("ERROR failed to append wild_kills.csv");
     }
 
     // -------------------------
@@ -526,10 +560,13 @@ namespace WildKillLogger
             g_players[key] = snapshot;
         }
 
-        DebugLog(
-            "PLAYER_TRACKED eos_id=" + snapshot.eos_id +
-            " name=" + snapshot.character_name +
-            " has_position=" + std::string(snapshot.has_position ? "true" : "false"));
+        if (g_config.write_debug_log)
+        {
+            DebugLog(
+                "PLAYER_TRACKED eos_id=" + snapshot.eos_id +
+                " name=" + snapshot.character_name +
+                " has_position=" + std::string(snapshot.has_position ? "true" : "false"));
+        }
     }
 
     void UpdatePlayerPositionsLoop()
@@ -574,7 +611,7 @@ namespace WildKillLogger
                 }
             }
             if (pruned > 0)
-                DebugLog("PRUNE_STALE_PLAYERS count=" + std::to_string(pruned));
+                DebugLogIfEnabled("PRUNE_STALE_PLAYERS count=" + std::to_string(pruned));
 
             std::this_thread::sleep_for(std::chrono::milliseconds(g_config.position_update_ms));
         }
@@ -596,11 +633,12 @@ namespace WildKillLogger
         if (!actor)
             return;
 
-        const std::string blueprint = GetBlueprintPath(actor);
-        if (!IsLikelyDinoCharacterBlueprint(blueprint))
+        const auto blueprint_info = GetOrClassifyBlueprint(actor);
+        const std::string& blueprint = blueprint_info.first;
+        if (!blueprint_info.second)
         {
             if (g_config.debug_log_non_dino_destroy)
-                DebugLog("NON_DINO_DESTROY blueprint=" + blueprint);
+                DebugLogIfEnabled("NON_DINO_DESTROY blueprint=" + blueprint);
             return;
         }
 
@@ -619,7 +657,8 @@ namespace WildKillLogger
 
             const std::time_t now = std::time(nullptr);
 
-            double best_distance = 1e18;
+            const double radius_sq = static_cast<double>(g_config.kill_radius) * static_cast<double>(g_config.kill_radius);
+            double best_distance_sq = 1e36;
             PlayerSnapshot* best_player = nullptr;
 
             for (auto& [key, player] : g_players)
@@ -633,14 +672,14 @@ namespace WildKillLogger
                     (now - player.last_seen) > g_config.player_fresh_seconds)
                     continue;
 
-                const double dist = Distance(player.position, dino_pos);
-                if (dist <= g_config.kill_radius)
+                const double dist_sq = DistanceSquared(player.position, dino_pos);
+                if (dist_sq <= radius_sq)
                 {
                     nearby_count++;
 
-                    if (dist < best_distance)
+                    if (dist_sq < best_distance_sq)
                     {
-                        best_distance = dist;
+                        best_distance_sq = dist_sq;
                         best_player = &player;
                     }
                 }
@@ -648,7 +687,7 @@ namespace WildKillLogger
 
             if (best_player)
             {
-                nearest_distance = best_distance;
+                nearest_distance = std::sqrt(best_distance_sq);
                 killer_eos = best_player->eos_id.empty() ? "unknown" : best_player->eos_id;
                 killer_name = best_player->character_name.empty() ? "unknown" : best_player->character_name;
 
@@ -659,16 +698,19 @@ namespace WildKillLogger
             }
         }
 
-        DebugLog(
-            "DINO_DESTROY blueprint=" + blueprint +
-            " x=" + std::to_string(dino_pos.X) +
-            " y=" + std::to_string(dino_pos.Y) +
-            " z=" + std::to_string(dino_pos.Z) +
-            " killer_eos=" + killer_eos +
-            " killer_name=" + killer_name +
-            " confidence=" + confidence +
-            " nearby_count=" + std::to_string(nearby_count) +
-            " nearest_distance=" + std::to_string(nearest_distance));
+        if (g_config.write_debug_log)
+        {
+            DebugLog(
+                "DINO_DESTROY blueprint=" + blueprint +
+                " x=" + std::to_string(dino_pos.X) +
+                " y=" + std::to_string(dino_pos.Y) +
+                " z=" + std::to_string(dino_pos.Z) +
+                " killer_eos=" + killer_eos +
+                " killer_name=" + killer_name +
+                " confidence=" + confidence +
+                " nearby_count=" + std::to_string(nearby_count) +
+                " nearest_distance=" + std::to_string(nearest_distance));
+        }
 
         const bool should_write =
             (confidence == "high") ||
@@ -684,12 +726,14 @@ namespace WildKillLogger
                 nearest_distance
             );
 
-            DebugLog("KILL_WRITTEN blueprint=" + blueprint + " killer_name=" + killer_name);
+            if (g_config.write_debug_log)
+                DebugLog("KILL_WRITTEN blueprint=" + blueprint + " killer_name=" + killer_name);
             Log::GetLog()->info("WildKillLogger: reliable kill {} -> {}", blueprint, killer_name);
         }
         else if (g_config.debug_log_skipped_kills)
         {
-            DebugLog("KILL_SKIPPED blueprint=" + blueprint + " reason=confidence_" + confidence);
+            if (g_config.write_debug_log)
+                DebugLog("KILL_SKIPPED blueprint=" + blueprint + " reason=confidence_" + confidence);
         }
     }
 }
@@ -736,7 +780,7 @@ void Hook_AActor_Destroyed(AActor* _this)
     catch (...)
     {
         Log::GetLog()->error("WildKillLogger: exception in Hook_AActor_Destroyed");
-        WildKillLogger::DebugLog("ERROR exception in Hook_AActor_Destroyed");
+        WildKillLogger::DebugLogIfEnabled("ERROR exception in Hook_AActor_Destroyed");
     }
 
     AActor_Destroyed_original(_this);
