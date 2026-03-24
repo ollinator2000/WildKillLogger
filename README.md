@@ -74,7 +74,9 @@ Standardwerte:
   "debug_log_non_dino_destroy": false,
   "debug_log_skipped_kills": true,
   "debug_log_sample_rate": 1,
+  "write_rejected_kills": false,
   "kill_csv_filename": "wild_kills.csv",
+  "rejected_csv_filename": "rejected_kills.csv",
   "debug_log_filename": "wildkilllogger_debug.log"
 }
 ```
@@ -84,6 +86,7 @@ Hinweis fuer Linux/Wine:
 - `enable_position_thread: true` nutzt Legacy-Tracking mit hoeherer Genauigkeit, kann aber in bestimmten Wine-Setups instabil sein.
 - `player_fresh_seconds` wird nur bei aktiviertem Positionsthread fuer die Freshness-Pruefung verwendet.
 - `debug_log_sample_rate` reduziert Hot-Path-Loglast (`1`=voll, `10`=jede 10. Debug-Zeile).
+- `write_rejected_kills` schreibt `low/unknown`-Faelle in `rejected_kills.csv` (ohne `wild_kills.csv` zu verschmutzen).
 
 ## Repository-Status
 

@@ -1,7 +1,7 @@
 // Build marker:
 // branch: perf_tuning
-// commit: e8dc0d1db6021c6a5cca059430abaf7e07c8b577
-// commit_timestamp: 2026-03-24T11:59:14+01:00
+// commit: 6ef5e969ddfa7ea9dac1a1d8793a68c3c3c2d830
+// commit_timestamp: 2026-03-24T12:29:14+01:00
 
 #include "API/ARK/Ark.h"
 
@@ -45,8 +45,10 @@ namespace WildKillLogger
         bool debug_log_non_dino_destroy = false;
         bool debug_log_skipped_kills = true;
         int debug_log_sample_rate = 1;
+        bool write_rejected_kills = false;
 
         std::string kill_csv_filename = "wild_kills.csv";
+        std::string rejected_csv_filename = "rejected_kills.csv";
         std::string debug_log_filename = "wildkilllogger_debug.log";
     };
 
@@ -76,6 +78,7 @@ namespace WildKillLogger
     bool g_destroy_hook_active = false;
     bool g_join_hook_active = false;
     bool g_kill_csv_header_written = false;
+    bool g_rejected_csv_header_written = false;
     bool g_compat_enable_thread_default_applied = false;
     std::atomic<uint64_t> g_dino_destroy_log_counter{0};
     std::atomic<uint64_t> g_kill_skipped_log_counter{0};
@@ -106,6 +109,11 @@ namespace WildKillLogger
     std::string GetDebugLogPath()
     {
         return GetPluginDir() + g_config.debug_log_filename;
+    }
+
+    std::string GetRejectedCsvPath()
+    {
+        return GetPluginDir() + g_config.rejected_csv_filename;
     }
 
     // -------------------------
@@ -255,7 +263,9 @@ namespace WildKillLogger
              << "  \"debug_log_non_dino_destroy\": false,\n"
              << "  \"debug_log_skipped_kills\": true,\n"
              << "  \"debug_log_sample_rate\": 1,\n"
+             << "  \"write_rejected_kills\": false,\n"
              << "  \"kill_csv_filename\": \"wild_kills.csv\",\n"
+             << "  \"rejected_csv_filename\": \"rejected_kills.csv\",\n"
              << "  \"debug_log_filename\": \"wildkilllogger_debug.log\"\n"
              << "}\n";
     }
@@ -281,7 +291,9 @@ namespace WildKillLogger
         cfg.debug_log_non_dino_destroy = RegexExtractBool(text, "debug_log_non_dino_destroy", cfg.debug_log_non_dino_destroy);
         cfg.debug_log_skipped_kills = RegexExtractBool(text, "debug_log_skipped_kills", cfg.debug_log_skipped_kills);
         cfg.debug_log_sample_rate = RegexExtractInt(text, "debug_log_sample_rate", cfg.debug_log_sample_rate);
+        cfg.write_rejected_kills = RegexExtractBool(text, "write_rejected_kills", cfg.write_rejected_kills);
         cfg.kill_csv_filename = RegexExtractString(text, "kill_csv_filename", cfg.kill_csv_filename);
+        cfg.rejected_csv_filename = RegexExtractString(text, "rejected_csv_filename", cfg.rejected_csv_filename);
         cfg.debug_log_filename = RegexExtractString(text, "debug_log_filename", cfg.debug_log_filename);
 
         // Backward compatibility:
@@ -563,6 +575,72 @@ namespace WildKillLogger
             DebugLogIfEnabled("ERROR failed to append wild_kills.csv");
     }
 
+    void EnsureRejectedCsvHeader()
+    {
+        std::lock_guard<std::mutex> lock(g_file_mutex);
+
+        if (g_rejected_csv_header_written)
+            return;
+
+        std::ofstream file(GetRejectedCsvPath(), std::ios::app);
+        if (!file.is_open())
+        {
+            Log::GetLog()->error("WildKillLogger: failed to open rejected_kills.csv for header");
+            return;
+        }
+
+        if (file.tellp() == 0)
+        {
+            file << "timestamp_utc,dino_blueprint,dino_x,dino_y,dino_z,killer_eos,killer_name,nearest_distance,confidence,nearby_count,reason\n";
+        }
+
+        g_rejected_csv_header_written = true;
+    }
+
+    void AppendRejectedKill(
+        const std::string& dino_blueprint,
+        const FVector& dino_pos,
+        const std::string& killer_eos,
+        const std::string& killer_name,
+        double nearest_distance,
+        const std::string& confidence,
+        int nearby_count,
+        const std::string& reason)
+    {
+        EnsureRejectedCsvHeader();
+
+        bool append_failed = false;
+        {
+            std::lock_guard<std::mutex> lock(g_file_mutex);
+
+            std::ofstream file(GetRejectedCsvPath(), std::ios::app);
+            if (!file.is_open())
+            {
+                Log::GetLog()->error("WildKillLogger: failed to append rejected_kills.csv");
+                append_failed = true;
+            }
+            else
+            {
+                file
+                    << CsvEscape(IsoNowUtc()) << ","
+                    << CsvEscape(dino_blueprint) << ","
+                    << dino_pos.X << ","
+                    << dino_pos.Y << ","
+                    << dino_pos.Z << ","
+                    << CsvEscape(killer_eos) << ","
+                    << CsvEscape(killer_name) << ","
+                    << nearest_distance << ","
+                    << CsvEscape(confidence) << ","
+                    << nearby_count << ","
+                    << CsvEscape(reason)
+                    << "\n";
+            }
+        }
+
+        if (append_failed)
+            DebugLogIfEnabled("ERROR failed to append rejected_kills.csv");
+    }
+
     // -------------------------
     // Player Tracking
     // -------------------------
@@ -776,6 +854,20 @@ namespace WildKillLogger
         }
         else if (g_config.debug_log_skipped_kills)
         {
+            if (g_config.write_rejected_kills)
+            {
+                AppendRejectedKill(
+                    blueprint,
+                    dino_pos,
+                    killer_eos,
+                    killer_name,
+                    nearest_distance,
+                    confidence,
+                    nearby_count,
+                    "confidence_" + confidence
+                );
+            }
+
             if (g_config.write_debug_log &&
                 ShouldSampleLog(g_config.debug_log_sample_rate, g_kill_skipped_log_counter))
                 DebugLog("KILL_SKIPPED blueprint=" + blueprint + " reason=confidence_" + confidence);
@@ -851,6 +943,7 @@ extern "C" __declspec(dllexport) void Plugin_Init()
         " stale_player_seconds=" + std::to_string(WildKillLogger::g_config.stale_player_seconds) +
         " enable_position_thread=" + std::string(WildKillLogger::g_config.enable_position_thread ? "true" : "false") +
         " debug_log_sample_rate=" + std::to_string(WildKillLogger::g_config.debug_log_sample_rate) +
+        " write_rejected_kills=" + std::string(WildKillLogger::g_config.write_rejected_kills ? "true" : "false") +
         " write_only_high_confidence=" + std::string(WildKillLogger::g_config.write_only_high_confidence ? "true" : "false"));
 
     if (WildKillLogger::g_compat_enable_thread_default_applied)
