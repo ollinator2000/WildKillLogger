@@ -366,11 +366,18 @@ namespace WildKillLogger
         }
 
         const std::string blueprint = GetBlueprintPath(actor);
+        if (blueprint.empty())
+            return {"", false};
+
         const bool is_dino = IsLikelyDinoCharacterBlueprint(blueprint);
 
         {
             std::lock_guard<std::mutex> lock(g_blueprint_cache_mutex);
-            g_blueprint_cache[class_key] = {blueprint, is_dino};
+            // Cache only confident classifications with a resolved blueprint.
+            // This avoids sticky false negatives when class blueprint lookup
+            // occasionally fails under load.
+            if (is_dino)
+                g_blueprint_cache[class_key] = {blueprint, true};
         }
 
         return {blueprint, is_dino};
