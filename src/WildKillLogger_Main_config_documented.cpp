@@ -17,6 +17,7 @@
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace WildKillLogger
 {
@@ -43,6 +44,7 @@ namespace WildKillLogger
         bool write_only_high_confidence = true;
         bool debug_log_non_dino_destroy = false;
         bool debug_log_skipped_kills = true;
+        int debug_log_sample_rate = 1;
 
         std::string kill_csv_filename = "wild_kills.csv";
         std::string debug_log_filename = "wildkilllogger_debug.log";
@@ -74,6 +76,9 @@ namespace WildKillLogger
     bool g_destroy_hook_active = false;
     bool g_join_hook_active = false;
     bool g_kill_csv_header_written = false;
+    bool g_compat_enable_thread_default_applied = false;
+    std::atomic<uint64_t> g_dino_destroy_log_counter{0};
+    std::atomic<uint64_t> g_kill_skipped_log_counter{0};
 
     Config g_config;
 
@@ -249,6 +254,7 @@ namespace WildKillLogger
              << "  \"write_only_high_confidence\": true,\n"
              << "  \"debug_log_non_dino_destroy\": false,\n"
              << "  \"debug_log_skipped_kills\": true,\n"
+             << "  \"debug_log_sample_rate\": 1,\n"
              << "  \"kill_csv_filename\": \"wild_kills.csv\",\n"
              << "  \"debug_log_filename\": \"wildkilllogger_debug.log\"\n"
              << "}\n";
@@ -262,6 +268,8 @@ namespace WildKillLogger
         if (text.empty())
             return;
 
+        g_compat_enable_thread_default_applied = false;
+
         Config cfg;
         cfg.kill_radius = RegexExtractFloat(text, "kill_radius", cfg.kill_radius);
         cfg.position_update_ms = RegexExtractInt(text, "position_update_ms", cfg.position_update_ms);
@@ -272,10 +280,28 @@ namespace WildKillLogger
         cfg.write_only_high_confidence = RegexExtractBool(text, "write_only_high_confidence", cfg.write_only_high_confidence);
         cfg.debug_log_non_dino_destroy = RegexExtractBool(text, "debug_log_non_dino_destroy", cfg.debug_log_non_dino_destroy);
         cfg.debug_log_skipped_kills = RegexExtractBool(text, "debug_log_skipped_kills", cfg.debug_log_skipped_kills);
+        cfg.debug_log_sample_rate = RegexExtractInt(text, "debug_log_sample_rate", cfg.debug_log_sample_rate);
         cfg.kill_csv_filename = RegexExtractString(text, "kill_csv_filename", cfg.kill_csv_filename);
         cfg.debug_log_filename = RegexExtractString(text, "debug_log_filename", cfg.debug_log_filename);
 
+        // Backward compatibility:
+        // older configs do not contain enable_position_thread.
+        // In that case we preserve legacy behavior and enable it.
+        if (!Contains(text, "\"enable_position_thread\""))
+        {
+            cfg.enable_position_thread = true;
+            g_compat_enable_thread_default_applied = true;
+        }
+
         g_config = cfg;
+    }
+
+    bool ShouldSampleLog(int sample_rate, std::atomic<uint64_t>& counter)
+    {
+        if (sample_rate <= 1)
+            return true;
+        const uint64_t value = counter.fetch_add(1, std::memory_order_relaxed) + 1;
+        return (value % static_cast<uint64_t>(sample_rate)) == 0;
     }
 
     // -------------------------
@@ -665,15 +691,20 @@ namespace WildKillLogger
 
         if (has_dino_pos)
         {
-            std::lock_guard<std::mutex> lock(g_data_mutex);
-
             const std::time_t now = std::time(nullptr);
-
             const double radius_sq = static_cast<double>(g_config.kill_radius) * static_cast<double>(g_config.kill_radius);
             double best_distance_sq = 1e36;
-            PlayerSnapshot* best_player = nullptr;
+            const PlayerSnapshot* best_player = nullptr;
 
-            for (auto& [key, player] : g_players)
+            std::vector<PlayerSnapshot> snapshot_players;
+            {
+                std::lock_guard<std::mutex> lock(g_data_mutex);
+                snapshot_players.reserve(g_players.size());
+                for (const auto& entry : g_players)
+                    snapshot_players.push_back(entry.second);
+            }
+
+            for (const auto& player : snapshot_players)
             {
                 if (!player.has_position)
                     continue;
@@ -710,7 +741,8 @@ namespace WildKillLogger
             }
         }
 
-        if (g_config.write_debug_log)
+        if (g_config.write_debug_log &&
+            ShouldSampleLog(g_config.debug_log_sample_rate, g_dino_destroy_log_counter))
         {
             DebugLog(
                 "DINO_DESTROY blueprint=" + blueprint +
@@ -744,7 +776,8 @@ namespace WildKillLogger
         }
         else if (g_config.debug_log_skipped_kills)
         {
-            if (g_config.write_debug_log)
+            if (g_config.write_debug_log &&
+                ShouldSampleLog(g_config.debug_log_sample_rate, g_kill_skipped_log_counter))
                 DebugLog("KILL_SKIPPED blueprint=" + blueprint + " reason=confidence_" + confidence);
         }
     }
@@ -817,7 +850,13 @@ extern "C" __declspec(dllexport) void Plugin_Init()
         " player_fresh_seconds=" + std::to_string(WildKillLogger::g_config.player_fresh_seconds) +
         " stale_player_seconds=" + std::to_string(WildKillLogger::g_config.stale_player_seconds) +
         " enable_position_thread=" + std::string(WildKillLogger::g_config.enable_position_thread ? "true" : "false") +
+        " debug_log_sample_rate=" + std::to_string(WildKillLogger::g_config.debug_log_sample_rate) +
         " write_only_high_confidence=" + std::string(WildKillLogger::g_config.write_only_high_confidence ? "true" : "false"));
+
+    if (WildKillLogger::g_compat_enable_thread_default_applied)
+    {
+        WildKillLogger::DebugLog("CONFIG_COMPAT enable_position_thread missing -> defaulting to true (legacy behavior)");
+    }
 
     try
     {

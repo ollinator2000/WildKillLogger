@@ -13,6 +13,7 @@ Datei: `config.json`
 | `write_only_high_confidence` | bool | `true` | Nur eindeutige Kills in CSV |
 | `debug_log_non_dino_destroy` | bool | `false` | Loggt verworfene Nicht-Dino-Destroy-Events |
 | `debug_log_skipped_kills` | bool | `true` | Loggt low/unknown-Skips |
+| `debug_log_sample_rate` | int | `1` | Sampling fuer haeufige Debug-Zeilen (`1`=jede, `10`=jede 10.) |
 | `kill_csv_filename` | string | `wild_kills.csv` | Name der Kill-CSV |
 | `debug_log_filename` | string | `wildkilllogger_debug.log` | Name der Debug-Log-Datei |
 
