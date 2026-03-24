@@ -6,7 +6,9 @@ Datei: `config.json`
 |---|---|---|---|
 | `kill_radius` | float | `3000.0` | Maximaler Abstand zwischen Dino und Spieler fuer Kill-Zuordnung |
 | `position_update_ms` | int | `2000` | Intervall der Positionsupdates |
-| `player_fresh_seconds` | int | `15` | Maximales Alter der letzten Spielerposition |
+| `player_fresh_seconds` | int | `15` | Maximales Alter der letzten Spielerposition (relevant bei `enable_position_thread=true`) |
+| `stale_player_seconds` | int | `86400` | Verwirft sehr alte Spieler-Snapshots aus der internen Liste |
+| `enable_position_thread` | bool | `false` | Aktiviert Legacy-Positions-Thread (unter Wine eher deaktiviert lassen) |
 | `write_debug_log` | bool | `true` | Aktiviert/Deaktiviert Debug-Log |
 | `write_only_high_confidence` | bool | `true` | Nur eindeutige Kills in CSV |
 | `debug_log_non_dino_destroy` | bool | `false` | Loggt verworfene Nicht-Dino-Destroy-Events |

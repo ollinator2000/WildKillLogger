@@ -27,6 +27,11 @@ namespace WildKillLogger
         float kill_radius = 3000.0f;
         int position_update_ms = 2000;
         int player_fresh_seconds = 15;
+        int stale_player_seconds = 86400;
+
+        // Safety switch for Linux+Wine environments.
+        // false = no background UE object access (safer, less precise tracking).
+        bool enable_position_thread = false;
 
         bool write_debug_log = true;
         bool write_only_high_confidence = true;
@@ -230,6 +235,8 @@ namespace WildKillLogger
              << "  \"kill_radius\": 3000.0,\n"
              << "  \"position_update_ms\": 2000,\n"
              << "  \"player_fresh_seconds\": 15,\n"
+             << "  \"stale_player_seconds\": 86400,\n"
+             << "  \"enable_position_thread\": false,\n"
              << "  \"write_debug_log\": true,\n"
              << "  \"write_only_high_confidence\": true,\n"
              << "  \"debug_log_non_dino_destroy\": false,\n"
@@ -251,6 +258,8 @@ namespace WildKillLogger
         cfg.kill_radius = RegexExtractFloat(text, "kill_radius", cfg.kill_radius);
         cfg.position_update_ms = RegexExtractInt(text, "position_update_ms", cfg.position_update_ms);
         cfg.player_fresh_seconds = RegexExtractInt(text, "player_fresh_seconds", cfg.player_fresh_seconds);
+        cfg.stale_player_seconds = RegexExtractInt(text, "stale_player_seconds", cfg.stale_player_seconds);
+        cfg.enable_position_thread = RegexExtractBool(text, "enable_position_thread", cfg.enable_position_thread);
         cfg.write_debug_log = RegexExtractBool(text, "write_debug_log", cfg.write_debug_log);
         cfg.write_only_high_confidence = RegexExtractBool(text, "write_only_high_confidence", cfg.write_only_high_confidence);
         cfg.debug_log_non_dino_destroy = RegexExtractBool(text, "debug_log_non_dino_destroy", cfg.debug_log_non_dino_destroy);
@@ -453,26 +462,33 @@ namespace WildKillLogger
     {
         EnsureKillCsvHeader();
 
-        std::lock_guard<std::mutex> lock(g_file_mutex);
-
-        std::ofstream file(GetKillCsvPath(), std::ios::app);
-        if (!file.is_open())
+        bool append_failed = false;
         {
-            Log::GetLog()->error("WildKillLogger: failed to append wild_kills.csv");
-            DebugLog("ERROR failed to append wild_kills.csv");
-            return;
+            std::lock_guard<std::mutex> lock(g_file_mutex);
+
+            std::ofstream file(GetKillCsvPath(), std::ios::app);
+            if (!file.is_open())
+            {
+                Log::GetLog()->error("WildKillLogger: failed to append wild_kills.csv");
+                append_failed = true;
+            }
+            else
+            {
+                file
+                    << CsvEscape(IsoNowUtc()) << ","
+                    << CsvEscape(dino_blueprint) << ","
+                    << dino_pos.X << ","
+                    << dino_pos.Y << ","
+                    << dino_pos.Z << ","
+                    << CsvEscape(killer_eos) << ","
+                    << CsvEscape(killer_name) << ","
+                    << nearest_distance
+                    << "\n";
+            }
         }
 
-        file
-            << CsvEscape(IsoNowUtc()) << ","
-            << CsvEscape(dino_blueprint) << ","
-            << dino_pos.X << ","
-            << dino_pos.Y << ","
-            << dino_pos.Z << ","
-            << CsvEscape(killer_eos) << ","
-            << CsvEscape(killer_name) << ","
-            << nearest_distance
-            << "\n";
+        if (append_failed)
+            DebugLog("ERROR failed to append wild_kills.csv");
     }
 
     // -------------------------
@@ -520,29 +536,45 @@ namespace WildKillLogger
     {
         while (g_running.load())
         {
+            size_t pruned = 0;
             {
                 std::lock_guard<std::mutex> lock(g_data_mutex);
 
-                for (auto& [key, player] : g_players)
+                const std::time_t now = std::time(nullptr);
+
+                for (auto it = g_players.begin(); it != g_players.end();)
                 {
-                    if (!player.character)
-                        continue;
-
-                    FVector pos{0.f, 0.f, 0.f};
-                    if (TryGetPlayerPosition(player.character, pos))
+                    if (g_config.stale_player_seconds > 0 &&
+                        (now - it->second.last_seen) > g_config.stale_player_seconds)
                     {
-                        player.position = pos;
-                        player.has_position = true;
-                        player.last_seen = std::time(nullptr);
+                        it = g_players.erase(it);
+                        ++pruned;
+                    }
+                    else
+                    {
+                        PlayerSnapshot& player = it->second;
+                        if (player.character)
+                        {
+                            FVector pos{0.f, 0.f, 0.f};
+                            if (TryGetPlayerPosition(player.character, pos))
+                            {
+                                player.position = pos;
+                                player.has_position = true;
+                                player.last_seen = now;
 
-                        if (player.character_name.empty() && player.controller)
-                            player.character_name = GetPlayerName(player.controller);
+                                if (player.character_name.empty() && player.controller)
+                                    player.character_name = GetPlayerName(player.controller);
 
-                        if (player.eos_id.empty() && player.controller)
-                            player.eos_id = GetPlayerEosId(player.controller);
+                                if (player.eos_id.empty() && player.controller)
+                                    player.eos_id = GetPlayerEosId(player.controller);
+                            }
+                        }
+                        ++it;
                     }
                 }
             }
+            if (pruned > 0)
+                DebugLog("PRUNE_STALE_PLAYERS count=" + std::to_string(pruned));
 
             std::this_thread::sleep_for(std::chrono::milliseconds(g_config.position_update_ms));
         }
@@ -595,7 +627,10 @@ namespace WildKillLogger
                 if (!player.has_position)
                     continue;
 
-                if ((now - player.last_seen) > g_config.player_fresh_seconds)
+                // Freshness filtering is only meaningful when the background
+                // position thread is enabled and actively updates positions.
+                if (g_config.enable_position_thread &&
+                    (now - player.last_seen) > g_config.player_fresh_seconds)
                     continue;
 
                 const double dist = Distance(player.position, dino_pos);
@@ -724,6 +759,8 @@ extern "C" __declspec(dllexport) void Plugin_Init()
         "CONFIG kill_radius=" + std::to_string(WildKillLogger::g_config.kill_radius) +
         " position_update_ms=" + std::to_string(WildKillLogger::g_config.position_update_ms) +
         " player_fresh_seconds=" + std::to_string(WildKillLogger::g_config.player_fresh_seconds) +
+        " stale_player_seconds=" + std::to_string(WildKillLogger::g_config.stale_player_seconds) +
+        " enable_position_thread=" + std::string(WildKillLogger::g_config.enable_position_thread ? "true" : "false") +
         " write_only_high_confidence=" + std::string(WildKillLogger::g_config.write_only_high_confidence ? "true" : "false"));
 
     try
@@ -762,9 +799,17 @@ extern "C" __declspec(dllexport) void Plugin_Init()
         WildKillLogger::DebugLog("HOOK_FAIL Destroyed");
     }
 
-    WildKillLogger::g_running = true;
-    WildKillLogger::g_position_thread = std::thread(WildKillLogger::UpdatePlayerPositionsLoop);
-    WildKillLogger::DebugLog("POSITION_THREAD_STARTED");
+    if (WildKillLogger::g_config.enable_position_thread)
+    {
+        WildKillLogger::g_running = true;
+        WildKillLogger::g_position_thread = std::thread(WildKillLogger::UpdatePlayerPositionsLoop);
+        WildKillLogger::DebugLog("POSITION_THREAD_STARTED");
+    }
+    else
+    {
+        WildKillLogger::g_running = false;
+        WildKillLogger::DebugLog("POSITION_THREAD_DISABLED");
+    }
 }
 
 extern "C" __declspec(dllexport) void Plugin_Unload()

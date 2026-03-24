@@ -52,7 +52,7 @@ Die Laufzeitdateien `*.csv` und `*.log` sind absichtlich in `.gitignore`.
 ## Installation
 
 1. `WildKillLogger.dll` nach `ArkApi/Plugins/WildKillLogger/` kopieren.
-2. `config.json` erzeugen lassen oder anpassen.
+2. `config.json` lokal aus `config.json.example` erzeugen oder vom Plugin erzeugen lassen.
 3. Server neu starten.
 4. Pruefen, ob `wild_kills.csv` und `wildkilllogger_debug.log` erzeugt werden.
 
@@ -67,6 +67,8 @@ Standardwerte:
   "kill_radius": 3000.0,
   "position_update_ms": 2000,
   "player_fresh_seconds": 15,
+  "stale_player_seconds": 86400,
+  "enable_position_thread": false,
   "write_debug_log": true,
   "write_only_high_confidence": true,
   "debug_log_non_dino_destroy": false,
@@ -76,6 +78,11 @@ Standardwerte:
 }
 ```
 
+Hinweis fuer Linux/Wine:
+- `enable_position_thread: false` ist der stabile Sicherheitsmodus.
+- `enable_position_thread: true` nutzt Legacy-Tracking mit hoeherer Genauigkeit, kann aber in bestimmten Wine-Setups instabil sein.
+- `player_fresh_seconds` wird nur bei aktiviertem Positionsthread fuer die Freshness-Pruefung verwendet.
+
 ## Repository-Status
 
 Dieses Repository ist als Community-Repo vorbereitet.
@@ -83,7 +90,7 @@ Dieses Repository ist als Community-Repo vorbereitet.
 Aktuell enthalten:
 - `WildKillLogger.dll` (kompilierte Plugin-Datei)
 - `PluginInfo.json`
-- `config.json` und `config.json.example`
+- `config.json.example` (Vorlage; `config.json` bleibt lokal und wird nicht versioniert)
 - `WildKillLogger_Config_Dokumentation.pdf`
 
 Hinweis:
