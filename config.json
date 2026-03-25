@@ -1,0 +1,20 @@
+{
+  "kill_radius": 3000.0,
+  "position_update_ms": 2000,
+  "player_fresh_seconds": 15,
+  "stale_player_seconds": 86400,
+  "enable_position_thread": false,
+  "safe_mode_no_background_ue_access": true,
+  "write_debug_log": false,
+  "write_only_high_confidence": true,
+  "debug_log_non_dino_destroy": false,
+  "debug_log_skipped_kills": true,
+  "debug_log_sample_rate": 1,
+  "write_rejected_kills": false,
+  "write_forensics_log": true,
+  "forensics_ring_size": 256,
+  "kill_csv_filename": "wild_kills.csv",
+  "rejected_csv_filename": "rejected_kills.csv",
+  "debug_log_filename": "wildkilllogger_debug.log",
+  "forensics_log_filename": "wildkilllogger_forensics.log"
+}

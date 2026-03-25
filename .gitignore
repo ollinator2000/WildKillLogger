@@ -20,5 +20,4 @@ obj/
 *.ipdb
 
 # Optional local config overrides
-config.json
 config.local.json
