@@ -9,15 +9,19 @@ Datei: `config.json`
 | `player_fresh_seconds` | int | `15` | Maximales Alter der letzten Spielerposition (relevant bei `enable_position_thread=true`) |
 | `stale_player_seconds` | int | `86400` | Verwirft sehr alte Spieler-Snapshots aus der internen Liste |
 | `enable_position_thread` | bool | `false` | Aktiviert Legacy-Positions-Thread (unter Wine eher deaktiviert lassen) |
+| `safe_mode_no_background_ue_access` | bool | `true` | Verhindert UE-Objektzugriffe im Hintergrund-Thread (empfohlen fuer Wine) |
 | `write_debug_log` | bool | `false` | Aktiviert/Deaktiviert Debug-Log (Default fuer Live-Betrieb) |
 | `write_only_high_confidence` | bool | `true` | Nur eindeutige Kills in CSV |
 | `debug_log_non_dino_destroy` | bool | `false` | Loggt verworfene Nicht-Dino-Destroy-Events |
 | `debug_log_skipped_kills` | bool | `true` | Loggt low/unknown-Skips |
 | `debug_log_sample_rate` | int | `1` | Sampling fuer haeufige Debug-Zeilen (`1`=jede, `10`=jede 10.) |
 | `write_rejected_kills` | bool | `false` | Schreibt verworfene Kill-Kandidaten (low/unknown) in eine separate CSV |
+| `write_forensics_log` | bool | `true` | Schreibt bei Fehler/Unload einen Ringbuffer mit Pre-Crash-Ereignissen |
+| `forensics_ring_size` | int | `256` | Anzahl der zuletzt gehaltenen Forensik-Ereignisse |
 | `kill_csv_filename` | string | `wild_kills.csv` | Name der Kill-CSV |
 | `rejected_csv_filename` | string | `rejected_kills.csv` | Name der CSV fuer verworfene Kill-Kandidaten |
 | `debug_log_filename` | string | `wildkilllogger_debug.log` | Name der Debug-Log-Datei |
+| `forensics_log_filename` | string | `wildkilllogger_forensics.log` | Name der Forensik-Log-Datei |
 
 CSV-Header:
 

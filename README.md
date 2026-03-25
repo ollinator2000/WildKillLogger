@@ -69,15 +69,19 @@ Standardwerte:
   "player_fresh_seconds": 15,
   "stale_player_seconds": 86400,
   "enable_position_thread": false,
+  "safe_mode_no_background_ue_access": true,
   "write_debug_log": false,
   "write_only_high_confidence": true,
   "debug_log_non_dino_destroy": false,
   "debug_log_skipped_kills": true,
   "debug_log_sample_rate": 1,
   "write_rejected_kills": false,
+  "write_forensics_log": true,
+  "forensics_ring_size": 256,
   "kill_csv_filename": "wild_kills.csv",
   "rejected_csv_filename": "rejected_kills.csv",
-  "debug_log_filename": "wildkilllogger_debug.log"
+  "debug_log_filename": "wildkilllogger_debug.log",
+  "forensics_log_filename": "wildkilllogger_forensics.log"
 }
 ```
 
@@ -85,8 +89,10 @@ Hinweis fuer Linux/Wine:
 - `enable_position_thread: false` ist der stabile Sicherheitsmodus.
 - `enable_position_thread: true` nutzt Legacy-Tracking mit hoeherer Genauigkeit, kann aber in bestimmten Wine-Setups instabil sein.
 - `player_fresh_seconds` wird nur bei aktiviertem Positionsthread fuer die Freshness-Pruefung verwendet.
+- `safe_mode_no_background_ue_access: true` laesst den Background-Thread ohne UE-Pointer-Zugriffe laufen.
 - `debug_log_sample_rate` reduziert Hot-Path-Loglast (`1`=voll, `10`=jede 10. Debug-Zeile).
 - `write_rejected_kills` schreibt `low/unknown`-Faelle in `rejected_kills.csv` (ohne `wild_kills.csv` zu verschmutzen).
+- `write_forensics_log` schreibt bei Fehlern/Unload einen Ringbuffer in `wildkilllogger_forensics.log`.
 
 ## Repository-Status
 

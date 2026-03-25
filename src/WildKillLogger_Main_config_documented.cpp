@@ -1,7 +1,7 @@
 // Build marker:
 // branch: perf_tuning
-// commit: cd0f4c055c6431dfdd76ff1a72b56bda17f9f553
-// commit_timestamp: 2026-03-24T12:50:47+01:00
+// commit: e27a9ca5fb7416bba59decefc2616bb9454d0ffc
+// commit_timestamp: 2026-03-25T07:53:57+01:00
 
 #include "API/ARK/Ark.h"
 
@@ -15,6 +15,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <deque>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -39,6 +40,7 @@ namespace WildKillLogger
         // Safety switch for Linux+Wine environments.
         // false = no background UE object access (safer, less precise tracking).
         bool enable_position_thread = false;
+        bool safe_mode_no_background_ue_access = true;
 
         bool write_debug_log = false;
         bool write_only_high_confidence = true;
@@ -46,10 +48,13 @@ namespace WildKillLogger
         bool debug_log_skipped_kills = true;
         int debug_log_sample_rate = 1;
         bool write_rejected_kills = false;
+        bool write_forensics_log = true;
+        int forensics_ring_size = 256;
 
         std::string kill_csv_filename = "wild_kills.csv";
         std::string rejected_csv_filename = "rejected_kills.csv";
         std::string debug_log_filename = "wildkilllogger_debug.log";
+        std::string forensics_log_filename = "wildkilllogger_forensics.log";
     };
 
     // Snapshot eines aktuell bekannten Spielers.
@@ -68,9 +73,11 @@ namespace WildKillLogger
     std::mutex g_data_mutex;
     std::mutex g_file_mutex;
     std::mutex g_blueprint_cache_mutex;
+    std::mutex g_forensics_mutex;
 
     std::unordered_map<uint64_t, PlayerSnapshot> g_players;
     std::unordered_map<uint64_t, std::pair<std::string, bool>> g_blueprint_cache;
+    std::deque<std::string> g_forensics_ring;
 
     std::atomic<bool> g_running{false};
     std::thread g_position_thread;
@@ -82,6 +89,7 @@ namespace WildKillLogger
     bool g_compat_enable_thread_default_applied = false;
     std::atomic<uint64_t> g_dino_destroy_log_counter{0};
     std::atomic<uint64_t> g_kill_skipped_log_counter{0};
+    std::atomic<uint64_t> g_forensics_event_counter{0};
 
     Config g_config;
 
@@ -114,6 +122,11 @@ namespace WildKillLogger
     std::string GetRejectedCsvPath()
     {
         return GetPluginDir() + g_config.rejected_csv_filename;
+    }
+
+    std::string GetForensicsLogPath()
+    {
+        return GetPluginDir() + g_config.forensics_log_filename;
     }
 
     // -------------------------
@@ -258,15 +271,19 @@ namespace WildKillLogger
              << "  \"player_fresh_seconds\": 15,\n"
              << "  \"stale_player_seconds\": 86400,\n"
              << "  \"enable_position_thread\": false,\n"
+             << "  \"safe_mode_no_background_ue_access\": true,\n"
              << "  \"write_debug_log\": false,\n"
              << "  \"write_only_high_confidence\": true,\n"
              << "  \"debug_log_non_dino_destroy\": false,\n"
              << "  \"debug_log_skipped_kills\": true,\n"
              << "  \"debug_log_sample_rate\": 1,\n"
              << "  \"write_rejected_kills\": false,\n"
+             << "  \"write_forensics_log\": true,\n"
+             << "  \"forensics_ring_size\": 256,\n"
              << "  \"kill_csv_filename\": \"wild_kills.csv\",\n"
              << "  \"rejected_csv_filename\": \"rejected_kills.csv\",\n"
-             << "  \"debug_log_filename\": \"wildkilllogger_debug.log\"\n"
+             << "  \"debug_log_filename\": \"wildkilllogger_debug.log\",\n"
+             << "  \"forensics_log_filename\": \"wildkilllogger_forensics.log\"\n"
              << "}\n";
     }
 
@@ -286,15 +303,19 @@ namespace WildKillLogger
         cfg.player_fresh_seconds = RegexExtractInt(text, "player_fresh_seconds", cfg.player_fresh_seconds);
         cfg.stale_player_seconds = RegexExtractInt(text, "stale_player_seconds", cfg.stale_player_seconds);
         cfg.enable_position_thread = RegexExtractBool(text, "enable_position_thread", cfg.enable_position_thread);
+        cfg.safe_mode_no_background_ue_access = RegexExtractBool(text, "safe_mode_no_background_ue_access", cfg.safe_mode_no_background_ue_access);
         cfg.write_debug_log = RegexExtractBool(text, "write_debug_log", cfg.write_debug_log);
         cfg.write_only_high_confidence = RegexExtractBool(text, "write_only_high_confidence", cfg.write_only_high_confidence);
         cfg.debug_log_non_dino_destroy = RegexExtractBool(text, "debug_log_non_dino_destroy", cfg.debug_log_non_dino_destroy);
         cfg.debug_log_skipped_kills = RegexExtractBool(text, "debug_log_skipped_kills", cfg.debug_log_skipped_kills);
         cfg.debug_log_sample_rate = RegexExtractInt(text, "debug_log_sample_rate", cfg.debug_log_sample_rate);
         cfg.write_rejected_kills = RegexExtractBool(text, "write_rejected_kills", cfg.write_rejected_kills);
+        cfg.write_forensics_log = RegexExtractBool(text, "write_forensics_log", cfg.write_forensics_log);
+        cfg.forensics_ring_size = RegexExtractInt(text, "forensics_ring_size", cfg.forensics_ring_size);
         cfg.kill_csv_filename = RegexExtractString(text, "kill_csv_filename", cfg.kill_csv_filename);
         cfg.rejected_csv_filename = RegexExtractString(text, "rejected_csv_filename", cfg.rejected_csv_filename);
         cfg.debug_log_filename = RegexExtractString(text, "debug_log_filename", cfg.debug_log_filename);
+        cfg.forensics_log_filename = RegexExtractString(text, "forensics_log_filename", cfg.forensics_log_filename);
 
         // Backward compatibility:
         // older configs do not contain enable_position_thread.
@@ -343,6 +364,40 @@ namespace WildKillLogger
     {
         if (g_config.write_debug_log)
             DebugLog(message);
+    }
+
+    void ForensicsEvent(const std::string& message)
+    {
+        if (!g_config.write_forensics_log)
+            return;
+
+        const int ring_size = g_config.forensics_ring_size > 0 ? g_config.forensics_ring_size : 256;
+        std::lock_guard<std::mutex> lock(g_forensics_mutex);
+        if (static_cast<int>(g_forensics_ring.size()) >= ring_size)
+            g_forensics_ring.pop_front();
+        g_forensics_ring.push_back("[" + IsoNowUtc() + "] " + message);
+    }
+
+    void FlushForensics(const std::string& reason)
+    {
+        if (!g_config.write_forensics_log)
+            return;
+
+        std::vector<std::string> snapshot;
+        {
+            std::lock_guard<std::mutex> lock(g_forensics_mutex);
+            snapshot.assign(g_forensics_ring.begin(), g_forensics_ring.end());
+        }
+
+        std::lock_guard<std::mutex> lock(g_file_mutex);
+        std::ofstream file(GetForensicsLogPath(), std::ios::app);
+        if (!file.is_open())
+            return;
+
+        file << "===== FORENSICS_FLUSH " << IsoNowUtc() << " reason=" << reason << " events=" << snapshot.size() << " =====\n";
+        for (const auto& line : snapshot)
+            file << line << "\n";
+        file << "===== END_FORENSICS_FLUSH =====\n";
     }
 
     // -------------------------
@@ -705,21 +760,24 @@ namespace WildKillLogger
                     }
                     else
                     {
-                        PlayerSnapshot& player = it->second;
-                        if (player.character)
+                        if (!g_config.safe_mode_no_background_ue_access)
                         {
-                            FVector pos{0.f, 0.f, 0.f};
-                            if (TryGetPlayerPosition(player.character, pos))
+                            PlayerSnapshot& player = it->second;
+                            if (player.character)
                             {
-                                player.position = pos;
-                                player.has_position = true;
-                                player.last_seen = now;
+                                FVector pos{0.f, 0.f, 0.f};
+                                if (TryGetPlayerPosition(player.character, pos))
+                                {
+                                    player.position = pos;
+                                    player.has_position = true;
+                                    player.last_seen = now;
 
-                                if (player.character_name.empty() && player.controller)
-                                    player.character_name = GetPlayerName(player.controller);
+                                    if (player.character_name.empty() && player.controller)
+                                        player.character_name = GetPlayerName(player.controller);
 
-                                if (player.eos_id.empty() && player.controller)
-                                    player.eos_id = GetPlayerEosId(player.controller);
+                                    if (player.eos_id.empty() && player.controller)
+                                        player.eos_id = GetPlayerEosId(player.controller);
+                                }
                             }
                         }
                         ++it;
@@ -766,6 +824,34 @@ namespace WildKillLogger
         std::string confidence = "unknown";
         int nearby_count = 0;
         double nearest_distance = -1.0;
+
+        // In safe mode, refresh player snapshots only in hook context and
+        // avoid touching UE objects from background worker threads.
+        if (g_config.safe_mode_no_background_ue_access)
+        {
+            std::lock_guard<std::mutex> lock(g_data_mutex);
+            const std::time_t now = std::time(nullptr);
+            for (auto& entry : g_players)
+            {
+                PlayerSnapshot& player = entry.second;
+                if (!player.character)
+                    continue;
+
+                FVector pos{0.f, 0.f, 0.f};
+                if (TryGetPlayerPosition(player.character, pos))
+                {
+                    player.position = pos;
+                    player.has_position = true;
+                    player.last_seen = now;
+
+                    if (player.character_name.empty() && player.controller)
+                        player.character_name = GetPlayerName(player.controller);
+
+                    if (player.eos_id.empty() && player.controller)
+                        player.eos_id = GetPlayerEosId(player.controller);
+                }
+            }
+        }
 
         if (has_dino_pos)
         {
@@ -834,6 +920,15 @@ namespace WildKillLogger
                 " nearest_distance=" + std::to_string(nearest_distance));
         }
 
+        if (ShouldSampleLog(g_config.debug_log_sample_rate, g_forensics_event_counter))
+        {
+            ForensicsEvent(
+                "DINO_ATTR blueprint=" + blueprint +
+                " confidence=" + confidence +
+                " nearby_count=" + std::to_string(nearby_count) +
+                " should_write=" + std::string((confidence == "high") || (!g_config.write_only_high_confidence && confidence != "unknown") ? "true" : "false"));
+        }
+
         const bool should_write =
             (confidence == "high") ||
             (!g_config.write_only_high_confidence && confidence != "unknown");
@@ -897,6 +992,7 @@ bool Hook_AShooterGameMode_HandleNewPlayer(
     AShooterCharacter* player_character,
     bool is_from_login)
 {
+    WildKillLogger::ForensicsEvent("HOOK_NEW_PLAYER");
     WildKillLogger::AddOrUpdatePlayer(new_player, player_character);
 
     return AShooterGameMode_HandleNewPlayer_original(
@@ -918,6 +1014,8 @@ void Hook_AActor_Destroyed(AActor* _this)
     {
         Log::GetLog()->error("WildKillLogger: exception in Hook_AActor_Destroyed");
         WildKillLogger::DebugLogIfEnabled("ERROR exception in Hook_AActor_Destroyed");
+        WildKillLogger::ForensicsEvent("EXCEPTION Hook_AActor_Destroyed");
+        WildKillLogger::FlushForensics("Hook_AActor_Destroyed exception");
     }
 
     AActor_Destroyed_original(_this);
@@ -942,9 +1040,12 @@ extern "C" __declspec(dllexport) void Plugin_Init()
         " player_fresh_seconds=" + std::to_string(WildKillLogger::g_config.player_fresh_seconds) +
         " stale_player_seconds=" + std::to_string(WildKillLogger::g_config.stale_player_seconds) +
         " enable_position_thread=" + std::string(WildKillLogger::g_config.enable_position_thread ? "true" : "false") +
+        " safe_mode_no_background_ue_access=" + std::string(WildKillLogger::g_config.safe_mode_no_background_ue_access ? "true" : "false") +
         " debug_log_sample_rate=" + std::to_string(WildKillLogger::g_config.debug_log_sample_rate) +
+        " write_forensics_log=" + std::string(WildKillLogger::g_config.write_forensics_log ? "true" : "false") +
         " write_rejected_kills=" + std::string(WildKillLogger::g_config.write_rejected_kills ? "true" : "false") +
         " write_only_high_confidence=" + std::string(WildKillLogger::g_config.write_only_high_confidence ? "true" : "false"));
+    WildKillLogger::ForensicsEvent("PLUGIN_INIT");
 
     if (WildKillLogger::g_compat_enable_thread_default_applied)
     {
@@ -992,11 +1093,13 @@ extern "C" __declspec(dllexport) void Plugin_Init()
         WildKillLogger::g_running = true;
         WildKillLogger::g_position_thread = std::thread(WildKillLogger::UpdatePlayerPositionsLoop);
         WildKillLogger::DebugLog("POSITION_THREAD_STARTED");
+        WildKillLogger::ForensicsEvent("POSITION_THREAD_STARTED");
     }
     else
     {
         WildKillLogger::g_running = false;
         WildKillLogger::DebugLog("POSITION_THREAD_DISABLED");
+        WildKillLogger::ForensicsEvent("POSITION_THREAD_DISABLED");
     }
 }
 
@@ -1043,4 +1146,5 @@ extern "C" __declspec(dllexport) void Plugin_Unload()
 
     Log::GetLog()->info("WildKillLogger unloaded");
     WildKillLogger::DebugLog("PLUGIN_UNLOAD_END");
+    WildKillLogger::FlushForensics("Plugin_Unload");
 }
