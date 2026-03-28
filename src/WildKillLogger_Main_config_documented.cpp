@@ -437,23 +437,7 @@ namespace WildKillLogger
 
     std::string GetBlueprintPath(AActor* actor)
     {
-        if (!actor)
-            return "";
-
-#ifdef _WIN32
-        __try
-        {
-            if (!actor->ClassPrivateField())
-                return "";
-            return ToUtf8(AsaApi::GetApiUtils().GetClassBlueprint(actor->ClassPrivateField()));
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            ForensicsEvent("SEH GetBlueprintPath");
-            return "";
-        }
-#else
-        if (!actor->ClassPrivateField())
+        if (!actor || !actor->ClassPrivateField())
             return "";
 
         try
@@ -464,32 +448,14 @@ namespace WildKillLogger
         {
             return "";
         }
-#endif
     }
 
     std::pair<std::string, bool> GetOrClassifyBlueprint(AActor* actor)
     {
-        if (!actor)
+        if (!actor || !actor->ClassPrivateField())
             return {"", false};
 
-        uint64_t class_key = 0;
-#ifdef _WIN32
-        __try
-        {
-            if (!actor->ClassPrivateField())
-                return {"", false};
-            class_key = reinterpret_cast<uint64_t>(actor->ClassPrivateField());
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            ForensicsEvent("SEH GetOrClassifyBlueprint class key");
-            return {"", false};
-        }
-#else
-        if (!actor->ClassPrivateField())
-            return {"", false};
-        class_key = reinterpret_cast<uint64_t>(actor->ClassPrivateField());
-#endif
+        const auto class_key = reinterpret_cast<uint64_t>(actor->ClassPrivateField());
 
         {
             std::lock_guard<std::mutex> lock(g_blueprint_cache_mutex);
@@ -555,21 +521,6 @@ namespace WildKillLogger
         if (!actor)
             return false;
 
-#ifdef _WIN32
-        __try
-        {
-            if (actor->RootComponentField())
-            {
-                out_pos = actor->RootComponentField()->RelativeLocationField();
-                return true;
-            }
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            ForensicsEvent("SEH TryGetActorPosition");
-            return false;
-        }
-#else
         try
         {
             if (actor->RootComponentField())
@@ -581,7 +532,6 @@ namespace WildKillLogger
         catch (...)
         {
         }
-#endif
 
         return false;
     }
@@ -591,20 +541,6 @@ namespace WildKillLogger
         if (!character)
             return false;
 
-#ifdef _WIN32
-        __try
-        {
-            if (character->RootComponentField())
-            {
-                out_pos = character->RootComponentField()->RelativeLocationField();
-                return true;
-            }
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            return false;
-        }
-#else
         try
         {
             if (character->RootComponentField())
@@ -616,7 +552,6 @@ namespace WildKillLogger
         catch (...)
         {
         }
-#endif
 
         return false;
     }
