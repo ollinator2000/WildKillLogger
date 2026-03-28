@@ -1,7 +1,7 @@
 // Build marker:
 // branch: perf_tuning
-// commit: db0d7d59baea964c4a69014cc1b7e9d213b37788
-// commit_timestamp: 2026-03-25T08:01:48+01:00
+// commit: 9676d66eb6a61ec25e72c51b7b134d2beb4b0f77
+// commit_timestamp: 2026-03-25T08:03:33+01:00
 
 #include "API/ARK/Ark.h"
 
@@ -68,6 +68,7 @@ namespace WildKillLogger
         FVector position{0.f, 0.f, 0.f};
         bool has_position = false;
         std::time_t last_seen = 0;
+        int failed_position_reads = 0;
     };
 
     std::mutex g_data_mutex;
@@ -436,7 +437,23 @@ namespace WildKillLogger
 
     std::string GetBlueprintPath(AActor* actor)
     {
-        if (!actor || !actor->ClassPrivateField())
+        if (!actor)
+            return "";
+
+#ifdef _WIN32
+        __try
+        {
+            if (!actor->ClassPrivateField())
+                return "";
+            return ToUtf8(AsaApi::GetApiUtils().GetClassBlueprint(actor->ClassPrivateField()));
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            ForensicsEvent("SEH GetBlueprintPath");
+            return "";
+        }
+#else
+        if (!actor->ClassPrivateField())
             return "";
 
         try
@@ -447,14 +464,32 @@ namespace WildKillLogger
         {
             return "";
         }
+#endif
     }
 
     std::pair<std::string, bool> GetOrClassifyBlueprint(AActor* actor)
     {
-        if (!actor || !actor->ClassPrivateField())
+        if (!actor)
             return {"", false};
 
-        const auto class_key = reinterpret_cast<uint64_t>(actor->ClassPrivateField());
+        uint64_t class_key = 0;
+#ifdef _WIN32
+        __try
+        {
+            if (!actor->ClassPrivateField())
+                return {"", false};
+            class_key = reinterpret_cast<uint64_t>(actor->ClassPrivateField());
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            ForensicsEvent("SEH GetOrClassifyBlueprint class key");
+            return {"", false};
+        }
+#else
+        if (!actor->ClassPrivateField())
+            return {"", false};
+        class_key = reinterpret_cast<uint64_t>(actor->ClassPrivateField());
+#endif
 
         {
             std::lock_guard<std::mutex> lock(g_blueprint_cache_mutex);
@@ -520,6 +555,21 @@ namespace WildKillLogger
         if (!actor)
             return false;
 
+#ifdef _WIN32
+        __try
+        {
+            if (actor->RootComponentField())
+            {
+                out_pos = actor->RootComponentField()->RelativeLocationField();
+                return true;
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            ForensicsEvent("SEH TryGetActorPosition");
+            return false;
+        }
+#else
         try
         {
             if (actor->RootComponentField())
@@ -531,6 +581,7 @@ namespace WildKillLogger
         catch (...)
         {
         }
+#endif
 
         return false;
     }
@@ -540,6 +591,20 @@ namespace WildKillLogger
         if (!character)
             return false;
 
+#ifdef _WIN32
+        __try
+        {
+            if (character->RootComponentField())
+            {
+                out_pos = character->RootComponentField()->RelativeLocationField();
+                return true;
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+#else
         try
         {
             if (character->RootComponentField())
@@ -551,6 +616,7 @@ namespace WildKillLogger
         catch (...)
         {
         }
+#endif
 
         return false;
     }
@@ -723,6 +789,7 @@ namespace WildKillLogger
         snapshot.character_name = GetPlayerName(controller);
         snapshot.last_seen = std::time(nullptr);
         snapshot.has_position = TryGetPlayerPosition(character, snapshot.position);
+        snapshot.failed_position_reads = snapshot.has_position ? 0 : 1;
 
         const auto key = reinterpret_cast<uint64_t>(controller);
 
@@ -771,6 +838,7 @@ namespace WildKillLogger
                                     player.position = pos;
                                     player.has_position = true;
                                     player.last_seen = now;
+                                    player.failed_position_reads = 0;
 
                                     if (player.character_name.empty() && player.controller)
                                         player.character_name = GetPlayerName(player.controller);
@@ -778,7 +846,18 @@ namespace WildKillLogger
                                     if (player.eos_id.empty() && player.controller)
                                         player.eos_id = GetPlayerEosId(player.controller);
                                 }
+                                else
+                                {
+                                    player.failed_position_reads++;
+                                }
                             }
+                        }
+
+                        if (it->second.failed_position_reads >= 8)
+                        {
+                            it = g_players.erase(it);
+                            ++pruned;
+                            continue;
                         }
                         ++it;
                     }
@@ -843,6 +922,7 @@ namespace WildKillLogger
                     player.position = pos;
                     player.has_position = true;
                     player.last_seen = now;
+                    player.failed_position_reads = 0;
 
                     if (player.character_name.empty() && player.controller)
                         player.character_name = GetPlayerName(player.controller);
@@ -850,6 +930,18 @@ namespace WildKillLogger
                     if (player.eos_id.empty() && player.controller)
                         player.eos_id = GetPlayerEosId(player.controller);
                 }
+                else
+                {
+                    player.failed_position_reads++;
+                }
+            }
+
+            for (auto it = g_players.begin(); it != g_players.end();)
+            {
+                if (it->second.failed_position_reads >= 8)
+                    it = g_players.erase(it);
+                else
+                    ++it;
             }
         }
 
