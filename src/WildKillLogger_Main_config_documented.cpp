@@ -61,14 +61,11 @@ namespace WildKillLogger
     // Die Daten werden beim Join angelegt und danach zyklisch aktualisiert.
     struct PlayerSnapshot
     {
-        AShooterPlayerController* controller = nullptr;
-        AShooterCharacter* character = nullptr;
         std::string eos_id;
         std::string character_name;
         FVector position{0.f, 0.f, 0.f};
         bool has_position = false;
         std::time_t last_seen = 0;
-        int failed_position_reads = 0;
     };
 
     std::mutex g_data_mutex;
@@ -718,13 +715,10 @@ namespace WildKillLogger
             return;
 
         PlayerSnapshot snapshot;
-        snapshot.controller = controller;
-        snapshot.character = character;
         snapshot.eos_id = GetPlayerEosId(controller);
         snapshot.character_name = GetPlayerName(controller);
         snapshot.last_seen = std::time(nullptr);
         snapshot.has_position = TryGetPlayerPosition(character, snapshot.position);
-        snapshot.failed_position_reads = snapshot.has_position ? 0 : 1;
 
         const auto key = reinterpret_cast<uint64_t>(controller);
 
@@ -762,38 +756,6 @@ namespace WildKillLogger
                     }
                     else
                     {
-                        if (!g_config.safe_mode_no_background_ue_access)
-                        {
-                            PlayerSnapshot& player = it->second;
-                            if (player.character)
-                            {
-                                FVector pos{0.f, 0.f, 0.f};
-                                if (TryGetPlayerPosition(player.character, pos))
-                                {
-                                    player.position = pos;
-                                    player.has_position = true;
-                                    player.last_seen = now;
-                                    player.failed_position_reads = 0;
-
-                                    if (player.character_name.empty() && player.controller)
-                                        player.character_name = GetPlayerName(player.controller);
-
-                                    if (player.eos_id.empty() && player.controller)
-                                        player.eos_id = GetPlayerEosId(player.controller);
-                                }
-                                else
-                                {
-                                    player.failed_position_reads++;
-                                }
-                            }
-                        }
-
-                        if (it->second.failed_position_reads >= 8)
-                        {
-                            it = g_players.erase(it);
-                            ++pruned;
-                            continue;
-                        }
                         ++it;
                     }
                 }
@@ -839,46 +801,8 @@ namespace WildKillLogger
         int nearby_count = 0;
         double nearest_distance = -1.0;
 
-        // In safe mode, refresh player snapshots only in hook context and
-        // avoid touching UE objects from background worker threads.
-        if (g_config.safe_mode_no_background_ue_access)
-        {
-            std::lock_guard<std::mutex> lock(g_data_mutex);
-            const std::time_t now = std::time(nullptr);
-            for (auto& entry : g_players)
-            {
-                PlayerSnapshot& player = entry.second;
-                if (!player.character)
-                    continue;
-
-                FVector pos{0.f, 0.f, 0.f};
-                if (TryGetPlayerPosition(player.character, pos))
-                {
-                    player.position = pos;
-                    player.has_position = true;
-                    player.last_seen = now;
-                    player.failed_position_reads = 0;
-
-                    if (player.character_name.empty() && player.controller)
-                        player.character_name = GetPlayerName(player.controller);
-
-                    if (player.eos_id.empty() && player.controller)
-                        player.eos_id = GetPlayerEosId(player.controller);
-                }
-                else
-                {
-                    player.failed_position_reads++;
-                }
-            }
-
-            for (auto it = g_players.begin(); it != g_players.end();)
-            {
-                if (it->second.failed_position_reads >= 8)
-                    it = g_players.erase(it);
-                else
-                    ++it;
-            }
-        }
+        // Stability mode: no UE pointer access from cached player snapshots
+        // in destroy/hot paths. Attribution uses only stored snapshots.
 
         if (has_dino_pos)
         {
@@ -900,9 +824,10 @@ namespace WildKillLogger
                 if (!player.has_position)
                     continue;
 
-                // Freshness filtering is only meaningful when the background
-                // position thread is enabled and actively updates positions.
+                // Freshness filtering is only meaningful when positions are
+                // actively refreshed via the background thread.
                 if (g_config.enable_position_thread &&
+                    !g_config.safe_mode_no_background_ue_access &&
                     (now - player.last_seen) > g_config.player_fresh_seconds)
                     continue;
 
